@@ -7,7 +7,7 @@
 # url = "https://download.pytorch.org/whl/cpu"
 # explicit = true
 # ///
-"""quark, the smallest agent: building-agents' quark.py, with our model in it. uv run quark.py models/rl.pt"""
+"""The harness: the smallest agent around our model, built from five primitives. uv run harness.py models/rl.pt"""
 import subprocess, os, re, sys, json, datetime
 from model import Release
 
@@ -27,7 +27,7 @@ def capture_input():
 
 
 def assemble_context(conversation, prompt=True):         # the conversation, laid out in the chat template our model learned
-    instructions = f"You are quark, an agent. You act through bash, in {os.getcwd()}. Today is {datetime.date.today()}."
+    instructions = f"You are an agent. You act through bash, in {os.getcwd()}. Today is {datetime.date.today()}."
     return model.chat([{"role": "system", "content": instructions}, *conversation], tools=[bash], prompt=prompt)
 
 
@@ -42,7 +42,7 @@ def handle_output(response):                             # its words are shown; 
         try:
             command = json.loads(call)["arguments"]["command"]
         except (ValueError, KeyError, TypeError):
-            tool_results.append({"role": "tool", "content": "[not a tool call quark can read]"})
+            tool_results.append({"role": "tool", "content": "[not a tool call the harness can read]"})
             continue
         print(f"$ {command}")
         try:                                             # nobody's watching in training, so a command gets a minute

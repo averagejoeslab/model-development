@@ -1,13 +1,13 @@
-"""The tasks quark trains on: a fresh folder, a request, a reference solution, and a check of what it left behind.
+"""The tasks the agent trains on: a fresh folder, a request, a reference solution, and a check of what it left behind.
 Instruction-tuning imitates reference solutions that passed their check; RL uses the check as its reward."""
 import os, re, sys, json, random, shutil, datetime, tempfile, subprocess
 
-INSTRUCTIONS = "You are quark, an agent. You act through bash, in {where}. Today is {today}."   # quark.py's, word for word
-BASH = {"type": "function", "function": {"name": "bash", "description": "Run a shell command",       # quark.py's tool
+INSTRUCTIONS = "You are an agent. You act through bash, in {where}. Today is {today}."   # harness.py's, word for word
+BASH = {"type": "function", "function": {"name": "bash", "description": "Run a shell command",       # harness.py's tool
         "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}}
 
 
-def system(where=None):                                  # what quark tells the model, word for word, in the folder it works in
+def system(where=None):                                  # what the harness tells the model, word for word, in the folder it works in
     where = where or "/tmp/tmp" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789_", k=8))
     return {"role": "system", "content": INSTRUCTIONS.format(where=where, today=datetime.date.today())}
 

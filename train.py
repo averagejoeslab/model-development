@@ -12,7 +12,7 @@ import sys, os, re, io, glob, json, time, random, shutil, functools, contextlib,
 from datasets import load_dataset
 import torch, torch.nn.functional as F
 from model import Model, Tokenizer, Release, load_real, generate
-import tasks, quark
+import tasks, harness
 
 ROOT = os.path.dirname(os.path.abspath(__file__))        # data/ comes in, models/ come out, runs/ is the record
 os.chdir(ROOT)
@@ -225,7 +225,7 @@ def instruction_data(model):                             # four kinds of convers
              for ask, command in random.sample([row for row in nl2bash if not near(row[0])], 200)]                     # ask for a command
     data += [model.chat([{"role": "user", "content": row["question"]}, {"role": "assistant", "content": worked(row["answer"])}], prompt=False)
              for row in gsm8k("train")[:200]]                                                                         # reason
-    data += [model.chat(tasks.tool_session(), tools=[tasks.BASH], prompt=False) for _ in range(1500)]               # work as quark: verified sessions
+    data += [model.chat(tasks.tool_session(), tools=[tasks.BASH], prompt=False) for _ in range(1500)]               # work as the agent: verified sessions
     random.shuffle(data)
     return data
 
@@ -310,47 +310,47 @@ def instruct():
     finish(model, "instruct")
 
 
-# ── 4. post-training, part two: reinforcement learning, in quark ──────────────
+# ── 4. post-training, part two: reinforcement learning, in the harness ──────
 
-def attempt(kind, seed, steps=10):                       # one try at a task, in quark, in a fresh folder: what it said and did, and did it pass?
+def attempt(kind, seed, steps=10):                       # one try at a task, in the harness, in a fresh folder: what it said and did, and did it pass?
     where, ask, _, _, check = tasks.training_task(seed, kind)
     here = os.getcwd()
-    os.chdir(where)                                      # quark works in the folder it's started in
+    os.chdir(where)                                      # the harness works in the folder it's started in
     try:
         conversation = [{"role": "user", "content": ask}]
         with contextlib.redirect_stdout(io.StringIO()):
-            quark.act(conversation, steps)               # quark's own loop: our model, its tool, until it hands back
+            harness.act(conversation, steps)               # the harness's own loop: our model, its tool, until it hands back
         said = conversation[-1]["content"] if conversation[-1]["role"] == "assistant" else ""
-        return quark.assemble_context(conversation, prompt=False), check(said)   # the try as text, as the model saw and wrote it
+        return harness.assemble_context(conversation, prompt=False), check(said)   # the try as text, as the model saw and wrote it
     finally:
         os.chdir(here)
         shutil.rmtree(where, ignore_errors=True)
 
 
 def held_out_tasks():                                    # the held-out check: every kind of task, in folders it never trains in
-    quark.TEMPERATURE = 0                                # the most likely reply, so the score repeats
+    harness.TEMPERATURE = 0                                # the most likely reply, so the score repeats
     results = [attempt(tasks.TRAINING[n % len(tasks.TRAINING)], seed=10_000 + n) for n in range(40)]
-    quark.TEMPERATURE = None                             # tries in training: sampled as its generation settings say
+    harness.TEMPERATURE = None                             # tries in training: sampled as its generation settings say
     return results
 
 
-def score(weights):                                      # any model in quark, on the 40 held-out tasks: uv run train.py score models/instruct.pt
+def score(weights):                                      # any model in the harness, on the 40 held-out tasks: uv run train.py score models/instruct.pt
     global LOG
     name = os.path.basename(weights).removesuffix(".pt")
     LOG = f"runs/score-{name}.txt"
     open(LOG, "w").close()
-    quark.load(weights)
+    harness.load(weights)
     results = held_out_tasks()
     for n, (text, ok) in enumerate(results):
         open(f"runs/score-{name}.said.txt", "a" if n else "w").write(f"{'PASS' if ok else 'FAIL'}  {tasks.TRAINING[n % len(tasks.TRAINING)].__name__}\n{text}\n\n")
         log(f"{'PASS' if ok else 'FAIL'}  {tasks.TRAINING[n % len(tasks.TRAINING)].__name__}")
-    log(f"{name} in quark: {sum(ok for _, ok in results)}/40 held-out tasks")
+    log(f"{name} in the harness: {sum(ok for _, ok in results)}/40 held-out tasks")
 
 
-def rl(rounds=3, group=8):                               # reinforcement learning in quark: try training tasks, keep what passed
+def rl(rounds=3, group=8):                               # reinforcement learning in the harness: try training tasks, keep what passed
     logging_to("rl")
-    quark.load("models/instruct.pt")
-    model = quark.model
+    harness.load("models/instruct.pt")
+    model = harness.model
     done = resume(model, "rl")
     if not done:
         before = sum(ok for _, ok in held_out_tasks())
@@ -358,7 +358,7 @@ def rl(rounds=3, group=8):                               # reinforcement learnin
         if not before:                                   # never right: every group of tries would all fail, and there'd be nothing to learn
             sys.exit("RL needs the agent to pass some of the time: improve instruction-tuning first")
         save(model.model, "rl", step=0, passed=[])       # the check before is done: a restart goes straight to training
-    quark.TEMPERATURE = None                             # tries sampled as its generation settings say, so they differ
+    harness.TEMPERATURE = None                             # tries sampled as its generation settings say, so they differ
     optimizer, passed = trainable(model.model, lr=1e-6), done.get("passed", [])   # a tenth of instruction-tuning's step: trained on its own words, a big step drifts it
     for step in range(done.get("step", 0) + 1, rounds * len(tasks.TRAINING) + 1):
         kind = tasks.TRAINING[(step - 1) % len(tasks.TRAINING)]   # every kind, once a round, in folders the held-out check never uses

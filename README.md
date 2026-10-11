@@ -2,15 +2,15 @@
 
 By **[Chase Dovey](https://cdovey.dev/)** · [Average Joes Lab](https://github.com/averagejoeslab)
 
-An agent has two parts, a model and a harness: **Agent = Harness(Model)**. [Building agents](https://github.com/averagejoeslab/building-agents) builds the harness. This repo builds the model: first from its primitives, then trained through the stages a lab uses (pre-training, mid-training and post-training), on one computer, with no GPU.
+Model development, end to end: build a language model's architecture from its primitives, then train it through the stages a lab uses (pre-training, mid-training and post-training) until it works as an agent. It all runs on one computer, with no GPU.
 
 Every number in this README comes from a real run, and the run is in [`runs/`](./runs/).
 
 ```
 model.py    the model: its seven primitives, checked against Qwen3-0.6B
 train.py    its training, stage by stage: pre → mid → instruction-tuning → RL
-quark.py    the smallest agent, from building-agents, with our model in it: where post-training happens
-tasks.py    the tasks quark trains on, each with a check of what it left behind
+harness.py  the smallest agent around our model: where post-training happens, and where it's checked
+tasks.py    the tasks the agent trains on, each with a check of what it left behind
 data/       what training reads          models/  what training writes (not committed)
 runs/       what each stage printed
 ```
@@ -220,11 +220,26 @@ A base model is asked by example, so each page is shown with its other examples 
 
 Base continues text. It was never taught to take turns, or even to end one. Post-training teaches it, in the chat format of Qwen3-0.6B (Qwen's own chat model).
 
-**Our model in a harness.** We post-train an agent, so the model goes into one: [`quark.py`](./quark.py), the smallest agent from [Building agents](https://github.com/averagejoeslab/building-agents). It's the same five primitives (input, context, model interface, output, control flow) with two changes. The model interface runs our model instead of calling an API. Output reads each `<tool_call>` the model writes and runs it:
+**Our model in a harness.** We post-train an agent, so the model goes into a harness: the code around it that turns its tokens into actions, and the results back into tokens. [`harness.py`](./harness.py) is the smallest one, five primitives in about 70 lines:
+
+| Primitive | What it does |
+|---|---|
+| **Input** | captures what comes in: a request |
+| **Context** | lays out the instructions and the conversation in the model's chat template |
+| **Model interface** | asks our model for a reply |
+| **Output** | shows its words, and runs each `<tool_call>` it writes in bash |
+| **Control flow** | if a tool ran, its result goes back and the model goes again; if not, it hands back |
 
 ```python
-def request_response(context):                           # our model, not an API: it writes the reply one token at a time
-    return model.generate(context, most=512, temperature=TEMPERATURE)
+def act(conversation, steps=None):                       # the inner loop: go again while a tool ran; in training, at most `steps`
+    while steps is None or steps > 0:
+        response = request_response(assemble_context(conversation))
+        conversation.append({"role": "assistant", "content": response})
+        tool_results = handle_output(response)
+        if not tool_results:
+            return                                       # done: hand back to the person
+        conversation += tool_results                     # a tool ran: go again
+        steps = steps and steps - 1
 ```
 
 **The tasks.** [`tasks.py`](./tasks.py) has 26 kinds of work in small folders: a log, a CSV, a config, notes, failing tests. Examples:
@@ -233,9 +248,9 @@ def request_response(context):                           # our model, not an API
 - *What port does config.json set? Just tell me, don't touch it.*
 - *The tests are failing. Can you fix them?*
 
-Each task is a fresh folder, a request, a reference solution, and a check of what the agent left behind, not what it said. Training uses one set of folders. The **held-out tasks** are 40 others (every kind, in folders training never sees), run in quark, and they're how post-training is checked.
+Each task is a fresh folder, a request, a reference solution, and a check of what the agent left behind, not what it said. Training uses one set of folders. The **held-out tasks** are 40 others (every kind, in folders training never sees), run in the harness, and they're how post-training is checked.
 
-The mid-trained model in quark, on the held-out tasks (`uv run train.py score models/midtrain.pt`): **⟨pending⟩/40**. It knows the shell, but it doesn't know it's in a conversation.
+The mid-trained model in the harness, on the held-out tasks (`uv run train.py score models/midtrain.pt`): **⟨pending⟩/40**. It knows the shell, but it doesn't know it's in a conversation.
 
 #### Instruction-tuning
 
@@ -246,9 +261,9 @@ The mid-trained model in quark, on the held-out tasks (`uv run train.py score mo
 | Talk | [smol-smoltalk](https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk) (Apache 2.0), nothing about the shell | 200 |
 | Ask for a command | [NL2Bash](https://github.com/TellinaTool/nl2bash) | 200 |
 | Reason | [GSM8K](https://huggingface.co/datasets/openai/gsm8k) (MIT): worked steps, as thinking | 200 |
-| Work as quark | our training tasks: every command really run, kept only if it passes its check | 1,500 |
+| Work as the agent | our training tasks: every command really run, kept only if it passes its check | 1,500 |
 
-A quark session looks at the folder, acts, checks its work, then answers from what it saw:
+A session looks at the folder, acts, checks its work, then answers from what it saw:
 
 ```
 <|im_start|>user
@@ -279,13 +294,13 @@ Nothing it trains on may resemble what it's checked on. Public examples that sha
 
 It trains every number, the embedding table too, since Base has barely learned the token that ends a turn. It makes one pass through the data, because a second starts memorising (`uv run train.py instruct`).
 
-Held-out loss on 48 conversations it never trained on: **⟨pending⟩ → ⟨pending⟩**. In quark, on the held-out tasks: **⟨pending⟩/40**.
+Held-out loss on 48 conversations it never trained on: **⟨pending⟩ → ⟨pending⟩**. In the harness, on the held-out tasks: **⟨pending⟩/40**.
 
 ⟨pending: the same requests before and after, and the ways it still fails⟩
 
 #### Reinforcement learning
 
-**Goal:** succeed reliably. The model tries each kind of training task 8 times in quark. Each try is graded by its task's check, and the tries that passed are made more likely. If all 8 pass or all 8 fail, there's nothing to learn from. So RL can only make more likely what the model already does some of the time (`uv run train.py rl`).
+**Goal:** succeed reliably. The model tries each kind of training task 8 times in the harness. Each try is graded by its task's check, and the tries that passed are made more likely. If all 8 pass or all 8 fail, there's nothing to learn from. So RL can only make more likely what the model already does some of the time (`uv run train.py rl`).
 
 Imitation and RL are the same function, with different weights. Imitation weights every example 1. RL weights a try that passed 1 and a try that failed 0:
 
@@ -318,11 +333,11 @@ Each stage, on its own check:
 | Pre-training (ours) | held-out loss on Shakespeare | ⟨pending⟩ | ⟨pending⟩ |
 | Mid-training | held-out loss on shell pages; the shell check | ⟨pending⟩ | ⟨pending⟩ |
 | Instruction-tuning | held-out loss on conversations | ⟨pending⟩ | ⟨pending⟩ |
-| Reinforcement learning | held-out tasks in quark | ⟨pending⟩ | ⟨pending⟩ |
+| Reinforcement learning | held-out tasks in the harness | ⟨pending⟩ | ⟨pending⟩ |
 
-The same 40 held-out tasks in quark, where only the model changes:
+The same 40 held-out tasks in the harness, where only the model changes:
 
-| Model in quark | Held-out tasks |
+| Model in the harness | Held-out tasks |
 |---|---|
 | after mid-training | ⟨pending⟩/40 |
 | after instruction-tuning | ⟨pending⟩/40 |
@@ -341,10 +356,10 @@ uv run train.py pre                      # pre-training: our model, from random 
 uv run train.py mid                      # mid-training: Qwen3-0.6B-Base, on shell pages
 uv run train.py score models/midtrain.pt # the agent before post-training, on the held-out tasks
 uv run train.py instruct                 # post-training: instruction-tuning
-uv run train.py rl                       # post-training: reinforcement learning, in quark
+uv run train.py rl                       # post-training: reinforcement learning, in the harness
 uv run train.py score models/rl.pt
-uv run quark.py models/rl.pt             # talk to it
+uv run harness.py models/rl.pt           # talk to it
 ```
 
 > [!WARNING]
-> In RL and scoring, quark runs the commands our model writes, without asking. Run it somewhere you can afford to lose, as a user that can't harm the rest of your machine.
+> In RL and scoring, the harness runs the commands our model writes, without asking. Run it somewhere you can afford to lose, as a user that can't harm the rest of your machine.

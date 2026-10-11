@@ -329,7 +329,7 @@ def check():
              "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", "café 你好 🙂 1234567  x\t\tz\r\n  "]
     qwen = Release(CHAT)
     log("tokenizer: the same tokens as Qwen's:", all(qwen.encode(t) == reference.encode(t, add_special_tokens=False) for t in texts))
-    messages = [{"role": "system", "content": "You are quark."}, {"role": "user", "content": "Count the lines in a.txt."},
+    messages = [{"role": "system", "content": "You are an agent."}, {"role": "user", "content": "Count the lines in a.txt."},
                 {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "bash", "arguments": {"command": "wc -l < a.txt"}}}]},
                 {"role": "tool", "content": "3"}]
     text = qwen.chat(messages, [BASH])
