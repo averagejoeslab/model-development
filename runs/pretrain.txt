@@ -10,3 +10,5 @@ step 700: loss 3.49
 step 800: loss 3.58
 step 900: loss 3.21
 step 1000: loss 2.76
+step 1100: loss 2.92
+step 1200: loss 2.84
