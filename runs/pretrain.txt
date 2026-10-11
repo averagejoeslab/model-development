@@ -1,0 +1,4 @@
+text: 320,093 tokens of 2,048 kinds; model: 3,672,832 numbers, all random
+before: "ROMEO:\nGR9Clengeracices marry confAh condThey villainoud might weepRYnot her youump dgelo three�centioorseHa quar justham banishnder^ play are wishV sometHaolingbrokevers till ere fareINIUS-morrowNord'er deep speakGR eye brothermen lady� YORK Tybalt II" held-out loss 7.69
+step 100: loss 5.65
+step 200: loss 5.05
